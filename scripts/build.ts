@@ -9,6 +9,7 @@ import esbuildInline from 'esbuild-plugin-inline-import'
 import esbuildStyle from 'esbuild-style-plugin'
 import postcss from 'postcss'
 import tailwind from 'tailwindcss'
+import { tailwindGeistSansPlugin } from './tailwind/geist-sans-plugin'
 
 const IS_FIREFOX = process.argv.includes('--firefox')
 const IS_DEV = process.argv.includes('--dev')
@@ -76,9 +77,13 @@ function getPostcssPlugins(tailwindContent: string[]) {
     tailwind({
       content: [...tailwindContent],
       theme: {
-        extend: {},
+        extend: {
+          fontFamily: {
+            sans: 'GeistSans',
+          },
+        },
       },
-      plugins: [],
+      plugins: [tailwindGeistSansPlugin],
     }),
     autoprefixer({
       overrideBrowserslist: TARGET_BROWSER,
@@ -91,23 +96,29 @@ async function bundleContext(
   {
     tailwind,
     tailwindInline,
+    entryPointSuffix = '.js',
     ...additionalEsbuildOptions
   }: {
     tailwind?: boolean
     tailwindInline?: boolean
+    entryPointSuffix?: '.js' | '.ts' | '.tsx'
   } & esbuild.BuildOptions = {},
 ) {
   const esbuildOptions: esbuild.BuildOptions & { plugins: esbuild.Plugin[] } = {
-    entryPoints: [getSrcPath(context, 'index.js')],
+    entryPoints: [getSrcPath(context, `index${entryPointSuffix}`)],
     outfile: getDistPath(`${context}.js`),
     bundle: true,
     minify: !IS_DEV,
     metafile: true,
     plugins: [],
     target: TARGET_BROWSER.replace(' ', ''),
-    loader: {
-      '.js': 'jsx',
-    },
+    loader:
+      entryPointSuffix === '.js'
+        ? {
+            '.js': 'jsx',
+          }
+        : undefined,
+    tsconfig: entryPointSuffix === '.js' ? 'tsconfig.legacy.json' : undefined,
     ...additionalEsbuildOptions,
   }
 
@@ -115,7 +126,9 @@ async function bundleContext(
     esbuildOptions.plugins.push(
       esbuildStyle({
         postcss: {
-          plugins: getPostcssPlugins([getSrcPath(`${context}/**/*.js`)]),
+          plugins: getPostcssPlugins([
+            getSrcPath(`${context}/**/*.{js,ts,tsx}`),
+          ]),
         },
       }),
     )
@@ -126,7 +139,9 @@ async function bundleContext(
       esbuildInline({
         filter: /^tailwindInline:/,
         transform: (content) =>
-          postcss(getPostcssPlugins([getSrcPath(`${context}/**/*.js`)]))
+          postcss(
+            getPostcssPlugins([getSrcPath(`${context}/**/*.{js,ts,tsx}`)]),
+          )
             .process(content, { from: undefined })
             .then((result) => result.css)
             .catch((error) => {
@@ -178,12 +193,14 @@ async function build() {
         'icon128.png',
         'manifest.json',
         'popup.html',
+        'options.html',
       ),
       bundleContext('background'),
       bundleContext('content', {
         tailwindInline: true,
       }),
       bundleContext('popup', { define: { global: 'window' } }),
+      bundleContext('options', { entryPointSuffix: '.tsx', tailwind: true }),
     ])
   } catch (error) {
     console.error(error)
